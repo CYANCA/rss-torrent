@@ -1,0 +1,79 @@
+#!/usr/bin/env php
+<?php
+
+define('TORRENT_DIRECTORY', 'torrents', false);
+define('TOK_EOF', '#EOF ?>', false);
+
+$rssFeeds = array();
+
+$action = NULL;
+if ( isset($argv[1]) ) {
+	$action = strtolower(trim($argv[1]));
+}
+
+// Read in this file to get a list of the feeds
+$fileContents = file(__FILE__);
+
+switch ( $action ) {
+	
+	case 'add': {
+		if ( !isset($argv[2]) ) {
+			exit('error no feed specified');
+		}
+		
+		$feedUrl = trim($argv[2]);
+		
+		$fileContents[] = PHP_EOL;
+		$fileContents[] = $feedUrl;
+		
+		file_put_contents(__FILE__, $fileContents);
+		break;
+	}
+
+	default: {
+		$fileEof = false;
+
+		foreach ( $fileContents as $fileLine ) {
+			$fileLine = trim($fileLine);
+			if ( $fileEof ) {
+				$rssFeeds[] = $fileLine;
+			}
+			
+			if ( $fileLine == TOK_EOF ) {
+				$fileEof = true;
+			}
+		}
+
+		try {
+			foreach ( $rssFeeds as $feedUrl ) {
+				$feedXml = new SimpleXMLElement($feedUrl, LIBXML_NOERROR | LIBXML_NOWARNING, true);
+				$rssItems = $feedXml->channel[0]->item;
+				
+				foreach ( $rssItems as $rssItem ) {
+					// See if the file is a .torrent file, if so, and it doesn't exist, download it.
+					$torrentLink = $rssItem->link;
+					$torrentFile = end(explode('/', $torrentLink));
+					
+					if ( preg_match('/\.torrent$/i', $torrentFile) ) {
+						$torrentPath = TORRENT_DIRECTORY . DIRECTORY_SEPARATOR . $torrentFile;
+						
+						if ( !file_exists($torrentPath) ) {
+							$torrentFileContents = @file_get_contents($torrentLink);
+							
+							if ( !empty($torrentFileContents) ) {
+								file_put_contents($torrentPath, $torrentFileContents);
+							}
+						}
+					}
+				}
+			}
+		} catch ( Exception $e ) { }
+		
+		break;
+	}
+}
+
+exit(0);
+
+// Under no circumstances should you ever change the line below!
+#EOF ?>
