@@ -16,4 +16,4 @@ The script stores the RSS feed list and other configuration in the actual file i
 8. You can optionally execute the `rss-torrent` script manually, or set it up on a cron to run discretely. On each execution, it will fetch the feed, see what .torrent files have already been downloaded, and then download the new ones. Of course, this means you shouldn't delete the .torrent files after they're done downloading.
 
 I have the following line in my crontab that runs the script every 20mins and outputs details of the last run to a file:
-*/20 * * * * root /home/0common/rss-torrent.php>/home/0common/rss.log
+`*/20 * * * * root /home/0common/rss-torrent.php>/home/0common/rss.log`
