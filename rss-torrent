@@ -1,7 +1,176 @@
 #!/usr/bin/env php
 <?php
+// based on a script by leftnode
+// changed to allow filtering torrents by regex and to allow downloading when torrent url is not filename
 
-define('TORRENT_DIRECTORY', 'torrents', false);
+// as with the original script just run rss-torrent add 'http://url' to add a url to the bottom of this script
+
+// Change this to be the place where you want to download the .torrent files
+define('TORRENT_DIRECTORY', '/home/0common/dl2/watch', false);
+
+// change this to a regex to use for matching torrent file names
+// in this example we are matching two items (see that they are separated by pipes) 
+// define('MATCH_CRITERIA', '(The.Tv.Show.S24E.*720p|Anthother.Tv.Show.S11E.*720p).*', false);
+define('MATCH_CRITERIA', '(The.Tv.Show.S24E.*720p|Another.Tv.Show.S11E.*720p).*', false);
+
+// use this function to add tests for the regex
+// run the script with rss-torrent test to run these
+function runTests() {
+	AssertFileMatches('The.Tv.Show.S24E13.720p.HDTV.X264-GROUPNAME.torrent');
+	AssertFileMatches('Another.Tv.Show.S11E13.720p.HDTV.X264-GROUPNAME.torrent');
+	AssertFileDoesNotMatch('boring.tv.show.torrent');
+}
+
+// no need to change anything after here
+// just add urls to the script with rss-torrent add 'http://etc'
+
+
+function AssertFileMatches($fileName) {
+	if(fileMatchesRegex($fileName)) {
+		// echo 'passed for ' . $fileName . PHP_EOL;
+	}
+	else {
+		echo 'failed for ' . $fileName . PHP_EOL;
+	}
+}
+
+function AssertFileDoesNotMatch($fileName) {
+	if(!fileMatchesRegex($fileName)) {
+		// echo 'passed for ' . $fileName . PHP_EOL;
+	}
+	else {
+		echo 'failed for ' . $fileName . ' - it matched when it shouldnt have' . PHP_EOL;
+	}
+}
+// return true if the file matches the given regex
+function fileMatchesRegex($fileName) {
+	return preg_match('/' . MATCH_CRITERIA . '/', $fileName);
+}
+
+
+// See if the file is a .torrent file, if so, and it doesn't exist, download it.
+function handleFeed($rssItem) {
+	$torrentLink = $rssItem->link;
+	// $torrentFile = end(explode('/', $torrentLink));
+	$torrentFile = getRealFilename($torrentLink);
+	
+	echo 'checking file: ' . $torrentFile . PHP_EOL;
+
+	if ( fileMatchesRegex($torrentFile) ) {
+
+		if ( preg_match('/\.torrent$/i', $torrentFile) ) {
+			saveFile($torrentFile, $torrentLink);
+		}
+	}
+}
+
+// if the url does not end in .torrent this looks at the headers to get the real filename 
+function getRealFilename($torrentLink)
+{
+	$torrentFile = end(explode('/', $torrentLink));
+	if ( preg_match('/\.torrent$/i', $torrentFile) ) {
+		return $torrentFile;
+	}
+	else {
+		$headers = get_headers3($torrentLink);
+		// echo 'h: ';
+		
+		if($headers) {
+			foreach($headers as $header)
+			{
+				if (strpos(strtolower($header),'content-disposition') !== false)
+				{
+					$tmp_name = explode('=', $header);
+					if ($tmp_name[1]) return trim($tmp_name[1],'";\'');
+				}
+			}
+		}
+		else {
+			echo 'unable to get headers for ' . $torrentLink;
+		}
+
+		$stripped_url = preg_replace('/\\?.*/', '', $torrentLink);
+		return basename($stripped_url);
+	}
+}
+
+// the built in get_headers was not working on some torrent site
+function get_headers3($Url, $Format= 0, $Depth= 0) {
+
+	// echo 'checking: ' . $Url . PHP_EOL;
+
+    if ($Depth > 5) return;
+    $Parts = parse_url($Url);
+    if (!array_key_exists('path', $Parts))   $Parts['path'] = '/';
+    if (!array_key_exists('scheme', $Parts)) $Parts['scheme'] = 'http';
+    if (!array_key_exists('port', $Parts)) $Parts['port'] = 80;
+
+	// echo 'connecting to: ' . $Parts['host'] . ':' . $Parts['port'] . PHP_EOL;
+	
+    $Return = array();
+
+	if ($Parts['scheme'] == 'https') {
+		$fp = fsockopen('ssl://'.$Parts['host'], 443, $errno, $errstr, 30);
+	} else {
+		$fp = fsockopen($Parts['host'], $Parts['port'], $errno, $errstr, 30);
+	}
+    if ($fp) {
+        $Out = 'GET '.$Parts['path'].(isset($Parts['query']) ? '?'.@$Parts['query'] : '')." HTTP/1.1\r\n".
+               'Host: '.$Parts['host'].($Parts['port'] != 80 ? ':'.$Parts['port'] : '')."\r\n".
+               'Connection: Close'."\r\n";
+        fwrite($fp, $Out."\r\n");
+        $Redirect = false; $RedirectUrl = '';
+        while (!feof($fp) && $InLine = fgets($fp, 1280)) {
+            if ($InLine == "\r\n") break;
+            $InLine = rtrim($InLine);
+
+            list($Key, $Value) = explode(': ', $InLine, 2);
+            if ($Key == $InLine) {
+                if ($Format == 1)
+                        $Return[$Depth] = $InLine;
+                else    $Return[] = $InLine;
+
+                if (strpos($InLine, 'Moved') > 0) $Redirect = true;
+            } else {
+                if ($Key == 'Location') $RedirectUrl = $Value;
+                if ($Format == 1)
+                        $Return[$Key] = $Value;
+                else    $Return[] = $Key.': '.$Value;
+            }
+        }
+        fclose($fp);
+        if ($Redirect && !empty($RedirectUrl)) {
+            $NewParts = parse_url($RedirectUrl);
+            if (!array_key_exists('host', $NewParts))   $RedirectUrl = $Parts['host'].$RedirectUrl;
+            if (!array_key_exists('scheme', $NewParts)) $RedirectUrl = $Parts['scheme'].'://'.$RedirectUrl;
+            $RedirectHeaders = get_headers3($RedirectUrl, $Format, $Depth+1);
+            if ($RedirectHeaders) $Return = array_merge_recursive($Return, $RedirectHeaders);
+        }
+        return $Return;
+    }
+    return false;
+}
+
+// down load the torrent file
+function saveFile($torrentFile, $torrentLink) {
+	echo 'downloading torrent' . PHP_EOL;
+	$torrentPath = TORRENT_DIRECTORY . DIRECTORY_SEPARATOR . $torrentFile;
+	
+	if ( !file_exists($torrentPath) ) {
+		$torrentFileContents = file_get_contents($torrentLink);
+		
+		if ( !empty($torrentFileContents) ) {
+			file_put_contents($torrentPath, $torrentFileContents);
+		}
+		else {
+			echo 'empty contents for ' . $torrentLink . PHP_EOL;
+		}
+	}
+	else {
+		echo 'file exists' . PHP_EOL;
+	}
+}
+
 define('TOK_EOF', '#EOF ?>', false);
 
 $rssFeeds = array();
@@ -29,6 +198,11 @@ switch ( $action ) {
 		file_put_contents(__FILE__, $fileContents);
 		break;
 	}
+	
+	case 'test': {
+		runTests();
+		break;
+	}
 
 	default: {
 		$fileEof = false;
@@ -46,28 +220,16 @@ switch ( $action ) {
 
 		try {
 			foreach ( $rssFeeds as $feedUrl ) {
+				echo 'processing ' . $feedUrl . PHP_EOL;
+				
 				$feedXml = new SimpleXMLElement($feedUrl, LIBXML_NOERROR | LIBXML_NOWARNING, true);
 				$rssItems = $feedXml->channel[0]->item;
 				
 				foreach ( $rssItems as $rssItem ) {
-					// See if the file is a .torrent file, if so, and it doesn't exist, download it.
-					$torrentLink = $rssItem->link;
-					$torrentFile = end(explode('/', $torrentLink));
-					
-					if ( preg_match('/\.torrent$/i', $torrentFile) ) {
-						$torrentPath = TORRENT_DIRECTORY . DIRECTORY_SEPARATOR . $torrentFile;
-						
-						if ( !file_exists($torrentPath) ) {
-							$torrentFileContents = @file_get_contents($torrentLink);
-							
-							if ( !empty($torrentFileContents) ) {
-								file_put_contents($torrentPath, $torrentFileContents);
-							}
-						}
-					}
+					handleFeed($rssItem);
 				}
 			}
-		} catch ( Exception $e ) { }
+		} catch ( Exception $e ) { echo $e; }
 		
 		break;
 	}
